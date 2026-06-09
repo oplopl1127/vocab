@@ -115,10 +115,10 @@
   .empty { text-align:center; color:var(--dim); padding:50px 20px; font-size:18px; }
   .listhead { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--acc);
     letter-spacing:.1em; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); }
-  .row.flash { animation:flash 4s ease-out; }
+  .row.flash { animation:flash 2s ease-out; }
   @keyframes flash {
     0% { border-color:var(--acc); background:rgba(57,211,187,.18); }
-    70% { border-color:var(--acc); background:rgba(57,211,187,.18); }
+    60% { border-color:var(--acc); background:rgba(57,211,187,.18); }
     100% { border-color:var(--line); background:var(--bg); }
   }
   .toggle { display:flex; gap:8px; }
@@ -486,7 +486,7 @@ async function saveCard() {
         // 等平滑捲動大致到位後再開始高亮,確保看得到
         setTimeout(() => {
           el.classList.add("flash");
-          setTimeout(() => el.classList.remove("flash"), 4000);
+          setTimeout(() => el.classList.remove("flash"), 2000);
         }, 450);
       }
     });
