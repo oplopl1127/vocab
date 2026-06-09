@@ -82,6 +82,10 @@
     background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%237d8590' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
     background-repeat:no-repeat; background-position:right 14px center; padding-right:36px; }
   .field input:focus, .field textarea:focus, .field select:focus { border-color:var(--acc); }
+  .spellhint { font-family:'JetBrains Mono',monospace; font-size:11px; margin-top:6px; min-height:14px; transition:.15s; }
+  .spellhint.warn { color:var(--acc2); }
+  .spellhint.ok { color:var(--good); }
+  .spellhint.checking { color:var(--dim); }
   .field textarea { resize:vertical; min-height:70px; }
   .btn { background:var(--acc); color:#08120f; border:none; border-radius:10px; padding:14px 22px;
     font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; cursor:pointer; transition:.15s; width:100%; }
@@ -139,7 +143,7 @@
   <!-- 新增 / 編輯 -->
   <div id="view-add" class="hidden">
     <div class="panel">
-      <div class="field"><label>單字 Word *</label><input id="f-word" placeholder="e.g. throughput" /></div>
+      <div class="field"><label>單字 Word *</label><input id="f-word" spellcheck="true" autocapitalize="off" autocorrect="off" placeholder="e.g. throughput" /><div id="spellHint" class="spellhint"></div></div>
       <div class="field"><label>詞性 Part of Speech</label>
         <select id="f-pos">
           <option value="">— 選擇詞性 —</option>
@@ -289,9 +293,35 @@ async function grade(q) {
   await upsertCard(updated);
   flipped = false; idx += 1; render();
 }
+// ---------- 拼字軟檢查(字典查詢,只提示不擋) ----------
+let spellTimer = null;
+function setSpellHint(cls, msg) {
+  const el = document.getElementById("spellHint");
+  el.className = "spellhint " + cls;
+  el.textContent = msg;
+}
+async function checkSpelling() {
+  const w = document.getElementById("f-word").value.trim();
+  if (!w) { setSpellHint("", ""); return; }
+  // 含空格(片語)或非英文字母就跳過,避免誤報
+  if (/[^a-zA-Z'-]/.test(w)) { setSpellHint("", ""); return; }
+  setSpellHint("checking", "查詢字典中…");
+  try {
+    const res = await fetch("https://api.dictionaryapi.dev/api/v2/entries/en/" + encodeURIComponent(w.toLowerCase()));
+    if (res.ok) {
+      setSpellHint("ok", "✓ 字典找得到這個字");
+    } else {
+      setSpellHint("warn", "⚠ 字典查無此字 — 可能是專業術語或拼字,確認無誤即可存");
+    }
+  } catch (e) {
+    // 離線或 API 掛掉:不打擾,清空
+    setSpellHint("", "");
+  }
+}
 function resetForm() {
   ["f-word", "f-meaning", "f-syn", "f-ex"].forEach(i => document.getElementById(i).value = "");
   document.getElementById("f-pos").value = "";
+  setSpellHint("", "");
 }
 function setFormMode(editing) {
   editingId = editing;
@@ -359,8 +389,8 @@ function render() {
       area.innerHTML = `<div class="panel"><div class="empty">${cards.length === 0 ? "還沒有單字,先去新增一些吧。" : "🎉 今天的複習都完成了!"}</div></div>`;
       return;
     }
-    const front = `<div class="word">${esc(cur.word)}</div>${cur.pos ? `<div class="pos">${esc(cur.pos)}</div>` : ""}<div class="hint">點擊翻面</div>`;
-    const back = `<div class="mean">${esc(cur.meaning)}</div>${cur.synonyms ? `<div class="syn">≈ ${esc(cur.synonyms)}</div>` : ""}${cur.example ? `<div class="ex">"${esc(cur.example)}"</div>` : ""}<div class="hint">你記得多清楚?</div>`;
+    const front = `<div class="word">${esc(cur.word)}</div>${cur.example ? `<div class="ex">"${esc(cur.example)}"</div>` : ""}<div class="hint">點擊翻面</div>`;
+    const back = `<div class="mean">${esc(cur.meaning)}</div>${cur.pos ? `<div class="pos">${esc(cur.pos)}</div>` : ""}${cur.synonyms ? `<div class="syn">≈ ${esc(cur.synonyms)}</div>` : ""}<div class="hint">你記得多清楚?</div>`;
     let grades = "";
     if (flipped) {
       grades = algo === "sm2"
@@ -400,6 +430,12 @@ function render() {
   await loadAll();
   document.getElementById("algoLabel").textContent = algo === "sm2" ? "SM-2" : "簡單版";
   setAlgo(algo);
+  // 拼字軟檢查:打字停頓 700ms 後查字典
+  document.getElementById("f-word").addEventListener("input", () => {
+    setSpellHint("", "");
+    clearTimeout(spellTimer);
+    spellTimer = setTimeout(checkSpelling, 700);
+  });
   render();
 })();
 </script>
