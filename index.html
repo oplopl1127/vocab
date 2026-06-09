@@ -113,6 +113,10 @@
   .edit:hover { color:var(--acc); }
   .rowbtns { display:flex; gap:2px; flex-shrink:0; }
   .empty { text-align:center; color:var(--dim); padding:50px 20px; font-size:18px; }
+  .listhead { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--acc);
+    letter-spacing:.1em; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); }
+  .row.flash { animation:flash 1.2s ease-out; }
+  @keyframes flash { 0% { border-color:var(--acc); background:rgba(57,211,187,.12); } 100% { border-color:var(--line); background:var(--bg); } }
   .toggle { display:flex; gap:8px; }
   .toggle button { flex:1; padding:14px; border-radius:11px; border:1px solid var(--line); background:var(--bg);
     color:var(--dim); cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:13px; transition:.15s; }
@@ -196,6 +200,12 @@
         </div>
       </div>
     </div>
+    <div class="panel" style="margin-bottom:16px;">
+      <div class="field" style="margin-bottom:0;">
+        <label>依組別檢視</label>
+        <select id="manageGroupFilter" onchange="onManageGroupChange()"><option value="__all__">全部組別</option></select>
+      </div>
+    </div>
     <div class="panel"><div id="manageList"></div></div>
   </div>
 </div>
@@ -209,7 +219,7 @@ const SUPABASE_KEY = "sb_publishable_WNgtNruTZeNvYaI4TsCXmA_b6oDYDjh";   // anon
 // ============================================================
 
 const DAY = 24 * 60 * 60 * 1000;
-let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [], currentGroup = "__all__", cramMode = false;
+let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [], currentGroup = "__all__", cramMode = false, manageGroup = "__all__";
 const useCloud = SUPABASE_URL && SUPABASE_KEY;
 
 // ---------- 間隔重複演算法 ----------
@@ -338,10 +348,24 @@ function refreshGroupFilter() {
   sel.value = groups.includes(prev) || prev === "__all__" ? prev : "__all__";
   currentGroup = sel.value;
 }
+function refreshManageGroupFilter() {
+  const sel = document.getElementById("manageGroupFilter");
+  const groups = allGroups();
+  const prev = manageGroup;
+  sel.innerHTML = `<option value="__all__">全部組別</option>` +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
+  sel.value = groups.includes(prev) || prev === "__all__" ? prev : "__all__";
+  manageGroup = sel.value;
+}
+function onManageGroupChange() {
+  manageGroup = document.getElementById("manageGroupFilter").value;
+  render();
+}
 
 function setView(v) {
   view = v; flipped = false; idx = 0;
   if (v === "review") { cramMode = false; refreshGroupFilter(); buildReviewQueue(); }
+  if (v === "manage") { refreshManageGroupFilter(); }
   ["review", "add", "manage"].forEach(x => {
     document.getElementById("view-" + x).classList.toggle("hidden", x !== v);
     document.getElementById("nav-" + x).classList.toggle("on", x === v);
@@ -441,11 +465,21 @@ async function saveCard() {
 
   if (editingId) {
     // 編輯:保留排程進度,只更新內容欄位(含組名)
+    const savedId = editingId;
     const existing = cards.find(c => c.id === editingId);
     const updated = { ...existing, word, pos, meaning, synonyms, example, group };
     cards = cards.map(c => c.id === editingId ? updated : c);
     await upsertCard(updated);
     resetForm(); setFormMode(null); setView("manage");
+    // 捲回剛編輯的卡片,不要跳到頁首
+    requestAnimationFrame(() => {
+      const el = document.getElementById("row-" + savedId);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("flash");
+        setTimeout(() => el.classList.remove("flash"), 1200);
+      }
+    });
   } else {
     const c = {
       id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
@@ -458,7 +492,9 @@ async function saveCard() {
 }
 async function removeCard(id) {
   if (!confirm("確定刪除這張卡片?")) return;
+  const y = window.scrollY;
   cards = cards.filter(c => c.id !== id); await deleteCardCloud(id); render();
+  requestAnimationFrame(() => window.scrollTo({ top: y }));
 }
 
 // ---------- 畫面 ----------
@@ -506,7 +542,10 @@ function render() {
   if (view === "manage") {
     const list = document.getElementById("manageList");
     if (cards.length === 0) { list.innerHTML = `<div class="empty">尚無卡片</div>`; return; }
-    list.innerHTML = cards.map(c => `<div class="row">
+    const shown = cards.filter(c => manageGroup === "__all__" || (c.group || "") === manageGroup);
+    if (shown.length === 0) { list.innerHTML = `<div class="empty">這組目前沒有單字</div>`; return; }
+    const head = `<div class="listhead">${manageGroup === "__all__" ? "全部" : esc(manageGroup)} · 共 ${shown.length} 個單字</div>`;
+    list.innerHTML = head + shown.map(c => `<div class="row" id="row-${c.id}">
       <div>
         <div class="w">${esc(c.word)} ${c.pos ? `<span class="m">${esc(c.pos)}</span>` : ""}</div>
         <div class="m">${esc(c.meaning)}${c.synonyms ? ` · ≈ ${esc(c.synonyms)}` : ""}</div>
