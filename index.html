@@ -61,6 +61,9 @@
   .spk:hover { color:var(--acc); }
   .grades { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-top:18px; }
   .grades.two { grid-template-columns:repeat(2,1fr); }
+  .grades.five { grid-template-columns:repeat(5,1fr); gap:5px; }
+  .grades.five .g { padding:12px 4px; font-size:12px; }
+  .grades.five .g small { font-size:9px; }
   .g { padding:14px 8px; border-radius:11px; border:1px solid var(--line); cursor:pointer;
     background:var(--panel); color:var(--txt); font-family:'JetBrains Mono',monospace; font-size:13px;
     transition:.15s; display:flex; flex-direction:column; gap:3px; align-items:center; }
@@ -190,19 +193,25 @@ const SUPABASE_KEY = "sb_publishable_WNgtNruTZeNvYaI4TsCXmA_b6oDYDjh";   // anon
 // ============================================================
 
 const DAY = 24 * 60 * 60 * 1000;
-let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null;
+let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [];
 const useCloud = SUPABASE_URL && SUPABASE_KEY;
 
 // ---------- 間隔重複演算法 ----------
+// q: 0=完全忘 1=很模糊 3=有點吃力 4=記得 5=秒答
 function sm2(c, q) {
-  let ef = c.ef ?? 2.5, interval = c.interval ?? 0, reps = c.reps ?? 0;
-  if (q < 3) { reps = 0; interval = 1; }
-  else {
+  let ef = c.ef ?? 2.3, interval = c.interval ?? 0, reps = c.reps ?? 0;
+  if (q < 3) {
+    reps = 0;
+    interval = q <= 0 ? 0 : 1; // 完全忘:當天再來;很模糊:1天後
+  } else {
     reps += 1;
-    if (reps === 1) interval = 1; else if (reps === 2) interval = 6; else interval = Math.round(interval * ef);
+    if (reps === 1) interval = 1;
+    else if (reps === 2) interval = 3;            // 原本 6,縮短成更勤
+    else interval = Math.max(1, Math.round(interval * ef));
     ef = Math.max(1.3, ef + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)));
   }
-  return { ...c, ef, interval, reps, due: Date.now() + interval * DAY };
+  const ms = interval === 0 ? 5 * 60 * 1000 : interval * DAY; // 當天再來=5分鐘後
+  return { ...c, ef, interval, reps, due: Date.now() + ms };
 }
 const LADDER = [1, 2, 4, 7, 15, 30, 60];
 function simple(c, ok) {
@@ -267,8 +276,30 @@ async function saveAlgo() {
 // ---------- 操作 ----------
 function dueCards() { return cards.filter(c => (c.due ?? 0) <= Date.now()); }
 
+// 建立本次複習的隨機佇列(洗牌到期卡片的 id)
+function buildReviewQueue() {
+  const due = dueCards();
+  const ids = due.map(c => c.id);
+  // Fisher-Yates 洗牌
+  for (let i = ids.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+  }
+  reviewQueue = ids;
+}
+// 取得目前要複習的卡片(佇列最前面那張,且仍到期)
+function currentCard() {
+  while (reviewQueue.length) {
+    const c = cards.find(x => x.id === reviewQueue[0]);
+    if (c && (c.due ?? 0) <= Date.now()) return c;
+    reviewQueue.shift(); // 已不存在或已不到期,跳過
+  }
+  return null;
+}
+
 function setView(v) {
   view = v; flipped = false; idx = 0;
+  if (v === "review") buildReviewQueue();
   ["review", "add", "manage"].forEach(x => {
     document.getElementById("view-" + x).classList.toggle("hidden", x !== v);
     document.getElementById("nav-" + x).classList.toggle("on", x === v);
@@ -287,11 +318,12 @@ function speak(t) {
 }
 function flip() { flipped = !flipped; render(); }
 async function grade(q) {
-  const due = dueCards(); const cur = due[idx]; if (!cur) return;
+  const cur = currentCard(); if (!cur) return;
   const updated = algo === "sm2" ? sm2(cur, q) : simple(cur, q >= 3);
   cards = cards.map(c => c.id === cur.id ? updated : c);
+  reviewQueue.shift(); // 從本次佇列移除,不再重複出現
   await upsertCard(updated);
-  flipped = false; idx += 1; render();
+  flipped = false; render();
 }
 // ---------- 拼字軟檢查(字典查詢,只提示不擋) ----------
 let spellTimer = null;
@@ -384,7 +416,7 @@ function render() {
 
   if (view === "review") {
     const area = document.getElementById("reviewArea");
-    const cur = due[idx];
+    const cur = currentCard();
     if (!cur) {
       area.innerHTML = `<div class="panel"><div class="empty">${cards.length === 0 ? "還沒有單字,先去新增一些吧。" : "🎉 今天的複習都完成了!"}</div></div>`;
       return;
@@ -394,14 +426,15 @@ function render() {
     let grades = "";
     if (flipped) {
       grades = algo === "sm2"
-        ? `<div class="grades">
-            <button class="g again" onclick="grade(0)">Again<small>&lt;1d</small></button>
-            <button class="g hard" onclick="grade(3)">Hard<small>稍難</small></button>
-            <button class="g good" onclick="grade(4)">Good<small>記得</small></button>
-            <button class="g easy" onclick="grade(5)">Easy<small>很簡單</small></button></div>`
+        ? `<div class="grades five">
+            <button class="g again" onclick="grade(0)">1<small>5 分鐘後再會</small></button>
+            <button class="g again" onclick="grade(1)">1<small>1 天後</small></button>
+            <button class="g hard" onclick="grade(3)">3<small>苦撐前進</small></button>
+            <button class="g good" onclick="grade(4)">4<small>穩穩前進</small></button>
+            <button class="g easy" onclick="grade(5)">5<small>下次很久</small></button></div>`
         : `<div class="grades two">
-            <button class="g again" onclick="grade(0)">✗ 忘記了<small>重來</small></button>
-            <button class="g good" onclick="grade(4)">✓ 記得<small>下一階</small></button></div>`;
+            <button class="g again" onclick="grade(0)">腦袋空白<small>重來</small></button>
+            <button class="g good" onclick="grade(4)">小菜一碟<small>下一階</small></button></div>`;
     }
     area.innerHTML = `<div class="card" onclick="flip()">
         <button class="spk" onclick="event.stopPropagation();speak('${esc(cur.word).replace(/'/g, "")}')">🔊</button>
@@ -430,6 +463,7 @@ function render() {
   await loadAll();
   document.getElementById("algoLabel").textContent = algo === "sm2" ? "SM-2" : "簡單版";
   setAlgo(algo);
+  buildReviewQueue();
   // 拼字軟檢查:打字停頓 700ms 後查字典
   document.getElementById("f-word").addEventListener("input", () => {
     setSpellHint("", "");
