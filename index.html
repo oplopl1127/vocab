@@ -176,6 +176,10 @@
       <div class="field"><label>中文 Meaning *</label><input id="f-meaning" placeholder="吞吐量" /></div>
       <div class="field"><label>同義詞 Synonyms</label><input id="f-syn" placeholder="capacity, output rate" /></div>
       <div class="field"><label>例句 Example</label><textarea id="f-ex" placeholder="Pipeline optimization improves overall throughput."></textarea></div>
+      <div class="field"><label>組別 Group</label>
+        <input id="f-group" list="groupList" placeholder="Day1 / Day2 / 托福單字…" />
+        <datalist id="groupList"></datalist>
+      </div>
       <button id="saveBtn" class="btn" onclick="saveCard()">加入卡片</button>
       <button id="cancelBtn" class="btn hidden" style="background:var(--line);color:var(--txt);margin-top:8px;" onclick="cancelEdit()">取消編輯</button>
     </div>
@@ -393,9 +397,14 @@ async function checkSpelling() {
   }
 }
 function resetForm() {
-  ["f-word", "f-meaning", "f-syn", "f-ex"].forEach(i => document.getElementById(i).value = "");
+  ["f-word", "f-meaning", "f-syn", "f-ex", "f-group"].forEach(i => document.getElementById(i).value = "");
   document.getElementById("f-pos").value = "";
   setSpellHint("", "");
+}
+// 把現有組名填入新增表單的 datalist,方便快速選取
+function refreshGroupDatalist() {
+  const dl = document.getElementById("groupList");
+  if (dl) dl.innerHTML = allGroups().map(g => `<option value="${esc(g)}"></option>`).join("");
 }
 function setFormMode(editing) {
   editingId = editing;
@@ -404,7 +413,7 @@ function setFormMode(editing) {
   document.getElementById("nav-add").textContent = editing ? "編輯" : "新增";
 }
 function newCard() {
-  resetForm(); setFormMode(null); setView("add");
+  resetForm(); setFormMode(null); refreshGroupDatalist(); setView("add");
 }
 function editCard(id) {
   const c = cards.find(x => x.id === id); if (!c) return;
@@ -413,6 +422,8 @@ function editCard(id) {
   document.getElementById("f-meaning").value = c.meaning || "";
   document.getElementById("f-syn").value = c.synonyms || "";
   document.getElementById("f-ex").value = c.example || "";
+  document.getElementById("f-group").value = c.group || "";
+  refreshGroupDatalist();
   setView("add");
   setFormMode(id);
 }
@@ -426,19 +437,16 @@ async function saveCard() {
   const pos = document.getElementById("f-pos").value.trim();
   const synonyms = document.getElementById("f-syn").value.trim();
   const example = document.getElementById("f-ex").value.trim();
+  const group = document.getElementById("f-group").value.trim();
 
   if (editingId) {
-    // 編輯:保留排程進度,只更新內容欄位
+    // 編輯:保留排程進度,只更新內容欄位(含組名)
     const existing = cards.find(c => c.id === editingId);
-    const updated = { ...existing, word, pos, meaning, synonyms, example };
+    const updated = { ...existing, word, pos, meaning, synonyms, example, group };
     cards = cards.map(c => c.id === editingId ? updated : c);
     await upsertCard(updated);
     resetForm(); setFormMode(null); setView("manage");
   } else {
-    const today = new Date();
-    const group = today.getFullYear() + "-" +
-      String(today.getMonth() + 1).padStart(2, "0") + "-" +
-      String(today.getDate()).padStart(2, "0");
     const c = {
       id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
       word, pos, meaning, synonyms, example, group,
