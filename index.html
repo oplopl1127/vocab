@@ -157,7 +157,7 @@
     </div>
     <div class="stat">
       <span>待複習 <b id="dueCount">0</b></span>
-      <span>總卡片 <b id="totalCount">0</b></span>
+      <span><span id="totalLabel">總卡片</span> <b id="totalCount">0</b></span>
       <span>演算法 <b id="algoLabel">SM-2</b></span>
     </div>
     <div id="reviewArea"></div>
@@ -304,7 +304,11 @@ async function saveAlgo() {
 }
 
 // ---------- 操作 ----------
-function inGroup(c) { return currentGroup === "__all__" || (c.group || "") === currentGroup; }
+function inGroup(c) {
+  if (currentGroup === "__all__") return true;
+  if (currentGroup === "__none__") return !c.group;
+  return (c.group || "") === currentGroup;
+}
 function dueCards() { return cards.filter(c => inGroup(c) && (c.due ?? 0) <= Date.now()); }
 // cram 模式:整組所有字,不管到不到期
 function cramCards() { return cards.filter(c => inGroup(c)); }
@@ -346,10 +350,13 @@ function refreshGroupFilter() {
   const sel = document.getElementById("groupFilter");
   const groups = allGroups();
   const prev = currentGroup;
-  sel.innerHTML = `<option value="__all__">全部組別</option>` +
-    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
+  const countOf = g => cards.filter(c => (c.group || "") === g).length;
+  const noGroup = cards.filter(c => !c.group).length;
+  sel.innerHTML = `<option value="__all__">全部組別 (${cards.length})</option>` +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)} (${countOf(g)})</option>`).join("") +
+    (noGroup ? `<option value="__none__">未分組 (${noGroup})</option>` : "");
   // 維持先前選擇(若還存在)
-  sel.value = groups.includes(prev) || prev === "__all__" ? prev : "__all__";
+  sel.value = (groups.includes(prev) || prev === "__all__" || (prev === "__none__" && noGroup)) ? prev : "__all__";
   currentGroup = sel.value;
 }
 function refreshManageGroupFilter() {
@@ -512,7 +519,10 @@ function esc(s) { return (s || "").replace(/[&<>"]/g, m => ({ "&": "&amp;", "<":
 function render() {
   const due = dueCards();
   document.getElementById("dueCount").textContent = due.length;
-  document.getElementById("totalCount").textContent = cards.length;
+  // 總數跟著選定組別變化
+  const inThisGroup = cards.filter(c => inGroup(c));
+  document.getElementById("totalLabel").textContent = currentGroup === "__all__" ? "總卡片" : "本組單字";
+  document.getElementById("totalCount").textContent = inThisGroup.length;
 
   if (view === "review") {
     const area = document.getElementById("reviewArea");
