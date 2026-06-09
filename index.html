@@ -115,8 +115,12 @@
   .empty { text-align:center; color:var(--dim); padding:50px 20px; font-size:18px; }
   .listhead { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--acc);
     letter-spacing:.1em; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--line); }
-  .row.flash { animation:flash 1.2s ease-out; }
-  @keyframes flash { 0% { border-color:var(--acc); background:rgba(57,211,187,.12); } 100% { border-color:var(--line); background:var(--bg); } }
+  .row.flash { animation:flash 4s ease-out; }
+  @keyframes flash {
+    0% { border-color:var(--acc); background:rgba(57,211,187,.18); }
+    70% { border-color:var(--acc); background:rgba(57,211,187,.18); }
+    100% { border-color:var(--line); background:var(--bg); }
+  }
   .toggle { display:flex; gap:8px; }
   .toggle button { flex:1; padding:14px; border-radius:11px; border:1px solid var(--line); background:var(--bg);
     color:var(--dim); cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:13px; transition:.15s; }
@@ -352,9 +356,12 @@ function refreshManageGroupFilter() {
   const sel = document.getElementById("manageGroupFilter");
   const groups = allGroups();
   const prev = manageGroup;
-  sel.innerHTML = `<option value="__all__">全部組別</option>` +
-    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
-  sel.value = groups.includes(prev) || prev === "__all__" ? prev : "__all__";
+  const countOf = g => cards.filter(c => (c.group || "") === g).length;
+  const noGroup = cards.filter(c => !c.group).length;
+  sel.innerHTML = `<option value="__all__">全部組別 (${cards.length})</option>` +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)} (${countOf(g)})</option>`).join("") +
+    (noGroup ? `<option value="__none__">未分組 (${noGroup})</option>` : "");
+  sel.value = (groups.includes(prev) || prev === "__all__" || (prev === "__none__" && noGroup)) ? prev : "__all__";
   manageGroup = sel.value;
 }
 function onManageGroupChange() {
@@ -476,8 +483,11 @@ async function saveCard() {
       const el = document.getElementById("row-" + savedId);
       if (el) {
         el.scrollIntoView({ block: "center", behavior: "smooth" });
-        el.classList.add("flash");
-        setTimeout(() => el.classList.remove("flash"), 1200);
+        // 等平滑捲動大致到位後再開始高亮,確保看得到
+        setTimeout(() => {
+          el.classList.add("flash");
+          setTimeout(() => el.classList.remove("flash"), 4000);
+        }, 450);
       }
     });
   } else {
@@ -542,9 +552,13 @@ function render() {
   if (view === "manage") {
     const list = document.getElementById("manageList");
     if (cards.length === 0) { list.innerHTML = `<div class="empty">尚無卡片</div>`; return; }
-    const shown = cards.filter(c => manageGroup === "__all__" || (c.group || "") === manageGroup);
+    const shown = cards.filter(c =>
+      manageGroup === "__all__" ? true :
+      manageGroup === "__none__" ? !c.group :
+      (c.group || "") === manageGroup);
     if (shown.length === 0) { list.innerHTML = `<div class="empty">這組目前沒有單字</div>`; return; }
-    const head = `<div class="listhead">${manageGroup === "__all__" ? "全部" : esc(manageGroup)} · 共 ${shown.length} 個單字</div>`;
+    const label = manageGroup === "__all__" ? "全部" : manageGroup === "__none__" ? "未分組" : esc(manageGroup);
+    const head = `<div class="listhead">${label} · 共 ${shown.length} 個單字</div>`;
     list.innerHTML = head + shown.map(c => `<div class="row" id="row-${c.id}">
       <div>
         <div class="w">${esc(c.word)} ${c.pos ? `<span class="m">${esc(c.pos)}</span>` : ""}</div>
