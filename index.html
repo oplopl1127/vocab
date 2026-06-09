@@ -76,7 +76,12 @@
   .field input, .field textarea { width:100%; background:var(--bg); border:1px solid var(--line);
     border-radius:9px; padding:12px 14px; color:var(--txt); font-family:'Newsreader',serif; font-size:16px;
     outline:none; transition:.15s; }
-  .field input:focus, .field textarea:focus { border-color:var(--acc); }
+  .field select { width:100%; background:var(--bg); border:1px solid var(--line);
+    border-radius:9px; padding:12px 14px; color:var(--txt); font-family:'Newsreader',serif; font-size:16px;
+    outline:none; transition:.15s; cursor:pointer; -webkit-appearance:none; appearance:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%237d8590' stroke-width='1.5' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat:no-repeat; background-position:right 14px center; padding-right:36px; }
+  .field input:focus, .field textarea:focus, .field select:focus { border-color:var(--acc); }
   .field textarea { resize:vertical; min-height:70px; }
   .btn { background:var(--acc); color:#08120f; border:none; border-radius:10px; padding:14px 22px;
     font-family:'JetBrains Mono',monospace; font-weight:700; font-size:13px; cursor:pointer; transition:.15s; width:100%; }
@@ -89,6 +94,9 @@
   .row .meta { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); margin-top:3px; }
   .del { background:none; border:none; color:var(--dim); cursor:pointer; padding:8px; font-size:16px; flex-shrink:0; }
   .del:hover { color:var(--bad); }
+  .edit { background:none; border:none; color:var(--dim); cursor:pointer; padding:8px; font-size:16px; flex-shrink:0; }
+  .edit:hover { color:var(--acc); }
+  .rowbtns { display:flex; gap:2px; flex-shrink:0; }
   .empty { text-align:center; color:var(--dim); padding:50px 20px; font-size:18px; }
   .toggle { display:flex; gap:8px; }
   .toggle button { flex:1; padding:14px; border-radius:11px; border:1px solid var(--line); background:var(--bg);
@@ -106,7 +114,7 @@
     <div class="logo"><b>VOCAB</b>.sr // 間隔重複</div>
     <div class="nav">
       <button id="nav-review" class="on" onclick="setView('review')">複習</button>
-      <button id="nav-add" onclick="setView('add')">新增</button>
+      <button id="nav-add" onclick="newCard()">新增</button>
       <button id="nav-manage" onclick="setView('manage')">管理</button>
     </div>
   </div>
@@ -128,15 +136,29 @@
     <div id="reviewArea"></div>
   </div>
 
-  <!-- 新增 -->
+  <!-- 新增 / 編輯 -->
   <div id="view-add" class="hidden">
     <div class="panel">
       <div class="field"><label>單字 Word *</label><input id="f-word" placeholder="e.g. throughput" /></div>
-      <div class="field"><label>詞性 Part of Speech</label><input id="f-pos" placeholder="n. / v. / adj. / adv." /></div>
+      <div class="field"><label>詞性 Part of Speech</label>
+        <select id="f-pos">
+          <option value="">— 選擇詞性 —</option>
+          <option value="n.">n. 名詞</option>
+          <option value="v.">v. 動詞</option>
+          <option value="adj.">adj. 形容詞</option>
+          <option value="adv.">adv. 副詞</option>
+          <option value="prep.">prep. 介系詞</option>
+          <option value="conj.">conj. 連接詞</option>
+          <option value="pron.">pron. 代名詞</option>
+          <option value="phr.">phr. 片語</option>
+          <option value="abbr.">abbr. 縮寫</option>
+        </select>
+      </div>
       <div class="field"><label>中文 Meaning *</label><input id="f-meaning" placeholder="吞吐量" /></div>
       <div class="field"><label>同義詞 Synonyms</label><input id="f-syn" placeholder="capacity, output rate" /></div>
       <div class="field"><label>例句 Example</label><textarea id="f-ex" placeholder="Pipeline optimization improves overall throughput."></textarea></div>
-      <button class="btn" onclick="addCard()">加入卡片</button>
+      <button id="saveBtn" class="btn" onclick="saveCard()">加入卡片</button>
+      <button id="cancelBtn" class="btn hidden" style="background:var(--line);color:var(--txt);margin-top:8px;" onclick="cancelEdit()">取消編輯</button>
     </div>
   </div>
 
@@ -164,7 +186,7 @@ const SUPABASE_KEY = "sb_publishable_WNgtNruTZeNvYaI4TsCXmA_b6oDYDjh";   // anon
 // ============================================================
 
 const DAY = 24 * 60 * 60 * 1000;
-let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0;
+let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null;
 const useCloud = SUPABASE_URL && SUPABASE_KEY;
 
 // ---------- 間隔重複演算法 ----------
@@ -267,21 +289,59 @@ async function grade(q) {
   await upsertCard(updated);
   flipped = false; idx += 1; render();
 }
-async function addCard() {
+function resetForm() {
+  ["f-word", "f-meaning", "f-syn", "f-ex"].forEach(i => document.getElementById(i).value = "");
+  document.getElementById("f-pos").value = "";
+}
+function setFormMode(editing) {
+  editingId = editing;
+  document.getElementById("saveBtn").textContent = editing ? "儲存修改" : "加入卡片";
+  document.getElementById("cancelBtn").classList.toggle("hidden", !editing);
+  document.getElementById("nav-add").textContent = editing ? "編輯" : "新增";
+}
+function newCard() {
+  resetForm(); setFormMode(null); setView("add");
+}
+function editCard(id) {
+  const c = cards.find(x => x.id === id); if (!c) return;
+  document.getElementById("f-word").value = c.word || "";
+  document.getElementById("f-pos").value = c.pos || "";
+  document.getElementById("f-meaning").value = c.meaning || "";
+  document.getElementById("f-syn").value = c.synonyms || "";
+  document.getElementById("f-ex").value = c.example || "";
+  setView("add");
+  setFormMode(id);
+}
+function cancelEdit() {
+  resetForm(); setFormMode(null); setView("manage");
+}
+async function saveCard() {
   const word = document.getElementById("f-word").value.trim();
   const meaning = document.getElementById("f-meaning").value.trim();
   if (!word || !meaning) { alert("單字和中文是必填的"); return; }
-  const c = {
-    id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
-    word, pos: document.getElementById("f-pos").value.trim(), meaning,
-    synonyms: document.getElementById("f-syn").value.trim(), example: document.getElementById("f-ex").value.trim(),
-    ef: 2.5, interval: 0, reps: 0, step: 0, due: Date.now(), created_at: new Date().toISOString(),
-  };
-  cards.push(c); await upsertCard(c);
-  ["f-word", "f-pos", "f-meaning", "f-syn", "f-ex"].forEach(i => document.getElementById(i).value = "");
-  setView("review");
+  const pos = document.getElementById("f-pos").value.trim();
+  const synonyms = document.getElementById("f-syn").value.trim();
+  const example = document.getElementById("f-ex").value.trim();
+
+  if (editingId) {
+    // 編輯:保留排程進度,只更新內容欄位
+    const existing = cards.find(c => c.id === editingId);
+    const updated = { ...existing, word, pos, meaning, synonyms, example };
+    cards = cards.map(c => c.id === editingId ? updated : c);
+    await upsertCard(updated);
+    resetForm(); setFormMode(null); setView("manage");
+  } else {
+    const c = {
+      id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
+      word, pos, meaning, synonyms, example,
+      ef: 2.5, interval: 0, reps: 0, step: 0, due: Date.now(), created_at: new Date().toISOString(),
+    };
+    cards.push(c); await upsertCard(c);
+    resetForm(); setView("review");
+  }
 }
 async function removeCard(id) {
+  if (!confirm("確定刪除這張卡片?")) return;
   cards = cards.filter(c => c.id !== id); await deleteCardCloud(id); render();
 }
 
@@ -327,7 +387,10 @@ function render() {
         <div class="m">${esc(c.meaning)}${c.synonyms ? ` · ≈ ${esc(c.synonyms)}` : ""}</div>
         <div class="meta">下次複習: ${(c.due ?? 0) > Date.now() ? new Date(c.due).toLocaleDateString() : "現在"} · 間隔 ${c.interval || 0}d${algo === "sm2" ? ` · EF ${(c.ef ?? 2.5).toFixed(2)}` : ""}</div>
       </div>
-      <button class="del" onclick="removeCard('${c.id}')">🗑</button></div>`).join("");
+      <div class="rowbtns">
+        <button class="edit" onclick="editCard('${c.id}')">✏️</button>
+        <button class="del" onclick="removeCard('${c.id}')">🗑</button>
+      </div></div>`).join("");
   }
 }
 
