@@ -39,6 +39,14 @@
   .dot.err { background:var(--bad); }
   .dot.busy { background:var(--acc2); animation:pulse 1s infinite; }
   @keyframes pulse { 50% { opacity:.3; } }
+  .groupbar { display:flex; gap:8px; margin-bottom:14px; }
+  .groupbar select { flex:1; background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    padding:10px 14px; color:var(--txt); font-family:'JetBrains Mono',monospace; font-size:12px;
+    outline:none; cursor:pointer; -webkit-appearance:none; appearance:none; }
+  .groupbar select:focus { border-color:var(--acc); }
+  .crambtn { background:var(--panel); border:1px solid var(--acc2); color:var(--acc2); border-radius:9px;
+    padding:10px 14px; font-family:'JetBrains Mono',monospace; font-size:12px; cursor:pointer; white-space:nowrap; transition:.15s; }
+  .crambtn:hover { background:var(--acc2); color:#1a0f06; }
   .stat { font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--dim);
     margin-bottom:18px; display:flex; gap:18px; flex-wrap:wrap; }
   .stat b { color:var(--acc); }
@@ -135,6 +143,10 @@
 
   <!-- 複習 -->
   <div id="view-review">
+    <div class="groupbar">
+      <select id="groupFilter" onchange="onGroupChange()"><option value="__all__">全部組別</option></select>
+      <button id="cramBtn" class="crambtn" onclick="cramGroup()">整組從頭練</button>
+    </div>
     <div class="stat">
       <span>待複習 <b id="dueCount">0</b></span>
       <span>總卡片 <b id="totalCount">0</b></span>
@@ -193,7 +205,7 @@ const SUPABASE_KEY = "sb_publishable_WNgtNruTZeNvYaI4TsCXmA_b6oDYDjh";   // anon
 // ============================================================
 
 const DAY = 24 * 60 * 60 * 1000;
-let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [];
+let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [], currentGroup = "__all__", cramMode = false;
 const useCloud = SUPABASE_URL && SUPABASE_KEY;
 
 // ---------- 間隔重複演算法 ----------
@@ -274,32 +286,58 @@ async function saveAlgo() {
 }
 
 // ---------- 操作 ----------
-function dueCards() { return cards.filter(c => (c.due ?? 0) <= Date.now()); }
+function inGroup(c) { return currentGroup === "__all__" || (c.group || "") === currentGroup; }
+function dueCards() { return cards.filter(c => inGroup(c) && (c.due ?? 0) <= Date.now()); }
+// cram 模式:整組所有字,不管到不到期
+function cramCards() { return cards.filter(c => inGroup(c)); }
 
-// 建立本次複習的隨機佇列(洗牌到期卡片的 id)
+// 建立本次複習的隨機佇列(洗牌)
 function buildReviewQueue() {
-  const due = dueCards();
-  const ids = due.map(c => c.id);
-  // Fisher-Yates 洗牌
+  const pool = cramMode ? cramCards() : dueCards();
+  const ids = pool.map(c => c.id);
   for (let i = ids.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [ids[i], ids[j]] = [ids[j], ids[i]];
   }
   reviewQueue = ids;
 }
-// 取得目前要複習的卡片(佇列最前面那張,且仍到期)
+// 取得目前要複習的卡片
 function currentCard() {
   while (reviewQueue.length) {
     const c = cards.find(x => x.id === reviewQueue[0]);
-    if (c && (c.due ?? 0) <= Date.now()) return c;
-    reviewQueue.shift(); // 已不存在或已不到期,跳過
+    if (c && inGroup(c) && (cramMode || (c.due ?? 0) <= Date.now())) return c;
+    reviewQueue.shift();
   }
   return null;
+}
+function onGroupChange() {
+  currentGroup = document.getElementById("groupFilter").value;
+  cramMode = false; flipped = false;
+  buildReviewQueue(); render();
+}
+function cramGroup() {
+  cramMode = !cramMode; flipped = false;
+  buildReviewQueue(); render();
+}
+// 取得所有不重複組名(新到舊)
+function allGroups() {
+  const set = new Set(cards.map(c => c.group).filter(Boolean));
+  return [...set].sort().reverse();
+}
+function refreshGroupFilter() {
+  const sel = document.getElementById("groupFilter");
+  const groups = allGroups();
+  const prev = currentGroup;
+  sel.innerHTML = `<option value="__all__">全部組別</option>` +
+    groups.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join("");
+  // 維持先前選擇(若還存在)
+  sel.value = groups.includes(prev) || prev === "__all__" ? prev : "__all__";
+  currentGroup = sel.value;
 }
 
 function setView(v) {
   view = v; flipped = false; idx = 0;
-  if (v === "review") buildReviewQueue();
+  if (v === "review") { cramMode = false; refreshGroupFilter(); buildReviewQueue(); }
   ["review", "add", "manage"].forEach(x => {
     document.getElementById("view-" + x).classList.toggle("hidden", x !== v);
     document.getElementById("nav-" + x).classList.toggle("on", x === v);
@@ -319,9 +357,13 @@ function speak(t) {
 function flip() { flipped = !flipped; render(); }
 async function grade(q) {
   const cur = currentCard(); if (!cur) return;
+  reviewQueue.shift(); // 從本次佇列移除
+  if (cramMode) {
+    // 整組練習:不改動排程,純粹過一遍
+    flipped = false; render(); return;
+  }
   const updated = algo === "sm2" ? sm2(cur, q) : simple(cur, q >= 3);
   cards = cards.map(c => c.id === cur.id ? updated : c);
-  reviewQueue.shift(); // 從本次佇列移除,不再重複出現
   await upsertCard(updated);
   flipped = false; render();
 }
@@ -393,9 +435,13 @@ async function saveCard() {
     await upsertCard(updated);
     resetForm(); setFormMode(null); setView("manage");
   } else {
+    const today = new Date();
+    const group = today.getFullYear() + "-" +
+      String(today.getMonth() + 1).padStart(2, "0") + "-" +
+      String(today.getDate()).padStart(2, "0");
     const c = {
       id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random())),
-      word, pos, meaning, synonyms, example,
+      word, pos, meaning, synonyms, example, group,
       ef: 2.5, interval: 0, reps: 0, step: 0, due: Date.now(), created_at: new Date().toISOString(),
     };
     cards.push(c); await upsertCard(c);
@@ -417,8 +463,16 @@ function render() {
   if (view === "review") {
     const area = document.getElementById("reviewArea");
     const cur = currentCard();
+    // cram 按鈕文字反映狀態
+    const cramBtn = document.getElementById("cramBtn");
+    if (cramBtn) { cramBtn.textContent = cramMode ? "← 回到正常複習" : "整組從頭練"; }
     if (!cur) {
-      area.innerHTML = `<div class="panel"><div class="empty">${cards.length === 0 ? "還沒有單字,先去新增一些吧。" : "🎉 今天的複習都完成了!"}</div></div>`;
+      let msg;
+      if (cards.length === 0) msg = "還沒有單字,先去新增一些吧。";
+      else if (cramMode) msg = "🎉 這組整輪練完了!";
+      else if (currentGroup !== "__all__") msg = `🎉 「${esc(currentGroup)}」這組今天複習完了!`;
+      else msg = "🎉 今天的複習都完成了!";
+      area.innerHTML = `<div class="panel"><div class="empty">${msg}</div></div>`;
       return;
     }
     const front = `<div class="word">${esc(cur.word)}</div>${cur.example ? `<div class="ex">"${esc(cur.example)}"</div>` : ""}<div class="hint">點擊翻面</div>`;
@@ -427,11 +481,11 @@ function render() {
     if (flipped) {
       grades = algo === "sm2"
         ? `<div class="grades five">
-            <button class="g again" onclick="grade(0)">1<small>5 分鐘後再會</small></button>
-            <button class="g again" onclick="grade(1)">1<small>1 天後</small></button>
-            <button class="g hard" onclick="grade(3)">3<small>苦撐前進</small></button>
-            <button class="g good" onclick="grade(4)">4<small>穩穩前進</small></button>
-            <button class="g easy" onclick="grade(5)">5<small>下次很久</small></button></div>`
+            <button class="g again" onclick="grade(0)">沒看過<small>5 分鐘後再會</small></button>
+            <button class="g again" onclick="grade(1)">好像有<small>1 天後</small></button>
+            <button class="g hard" onclick="grade(3)">擠出來<small>苦撐前進</small></button>
+            <button class="g good" onclick="grade(4)">想起來<small>穩穩前進</small></button>
+            <button class="g easy" onclick="grade(5)">這誰不會<small>下次很久</small></button></div>`
         : `<div class="grades two">
             <button class="g again" onclick="grade(0)">腦袋空白<small>重來</small></button>
             <button class="g good" onclick="grade(4)">小菜一碟<small>下一階</small></button></div>`;
@@ -448,7 +502,7 @@ function render() {
       <div>
         <div class="w">${esc(c.word)} ${c.pos ? `<span class="m">${esc(c.pos)}</span>` : ""}</div>
         <div class="m">${esc(c.meaning)}${c.synonyms ? ` · ≈ ${esc(c.synonyms)}` : ""}</div>
-        <div class="meta">下次複習: ${(c.due ?? 0) > Date.now() ? new Date(c.due).toLocaleDateString() : "現在"} · 間隔 ${c.interval || 0}d${algo === "sm2" ? ` · EF ${(c.ef ?? 2.5).toFixed(2)}` : ""}</div>
+        <div class="meta">${c.group ? `組:${esc(c.group)} · ` : ""}下次複習: ${(c.due ?? 0) > Date.now() ? new Date(c.due).toLocaleDateString() : "現在"} · 間隔 ${c.interval || 0}d${algo === "sm2" ? ` · EF ${(c.ef ?? 2.5).toFixed(2)}` : ""}</div>
       </div>
       <div class="rowbtns">
         <button class="edit" onclick="editCard('${c.id}')">✏️</button>
@@ -463,6 +517,7 @@ function render() {
   await loadAll();
   document.getElementById("algoLabel").textContent = algo === "sm2" ? "SM-2" : "簡單版";
   setAlgo(algo);
+  refreshGroupFilter();
   buildReviewQueue();
   // 拼字軟檢查:打字停頓 700ms 後查字典
   document.getElementById("f-word").addEventListener("input", () => {
