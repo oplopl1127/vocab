@@ -129,6 +129,20 @@
   .setup { background:var(--panel); border:1px solid var(--acc2); border-radius:14px; padding:20px; margin-bottom:18px; font-size:14px; line-height:1.6; }
   .setup code { font-family:'JetBrains Mono',monospace; background:var(--bg); padding:2px 6px; border-radius:4px; color:var(--acc); font-size:12px; }
   .hidden { display:none !important; }
+  /* ---- 搜尋列 ---- */
+  .searchpanel { position:sticky; top:0; z-index:30; box-shadow:0 8px 20px rgba(13,17,23,.75); }
+  .searchwrap { position:relative; }
+  .searchwrap input { padding-right:40px; }
+  .searchwrap input::-webkit-search-cancel-button,
+  .searchwrap input::-webkit-search-decoration { -webkit-appearance:none; appearance:none; }
+  .clearx { position:absolute; right:8px; top:50%; transform:translateY(-50%);
+    background:none; border:none; color:var(--dim); font-size:15px; cursor:pointer;
+    padding:6px 8px; line-height:1; font-family:'JetBrains Mono',monospace; }
+  .clearx:hover { color:var(--bad); }
+  mark { background:rgba(240,136,62,.25); color:var(--acc2); border-radius:3px; padding:0 2px; }
+  .crosshint { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--dim);
+    margin-top:14px; padding-top:12px; border-top:1px solid var(--line); line-height:1.7; }
+  .crosshint a { color:var(--acc); cursor:pointer; text-decoration:underline; }
   #toTop { position:fixed; right:18px; bottom:calc(18px + env(safe-area-inset-bottom));
     width:46px; height:46px; border-radius:50%; border:1px solid var(--acc);
     background:var(--panel); color:var(--acc); font-size:20px; cursor:pointer; z-index:50;
@@ -212,7 +226,15 @@
         </div>
       </div>
     </div>
-    <div class="panel" style="margin-bottom:16px;">
+    <div class="panel searchpanel" style="margin-bottom:16px;">
+      <div class="field">
+        <label>搜尋 Search</label>
+        <div class="searchwrap">
+          <input id="manageSearch" type="search" autocapitalize="off" autocorrect="off" spellcheck="false"
+                 placeholder="英文 / 中文 / 同義詞 / 例句 / 組別…" />
+          <button id="clearSearch" class="clearx hidden" onclick="clearManageSearch()" aria-label="清除搜尋">✕</button>
+        </div>
+      </div>
       <div class="field" style="margin-bottom:0;">
         <label>依組別檢視</label>
         <select id="manageGroupFilter" onchange="onManageGroupChange()"><option value="__all__">全部組別</option></select>
@@ -233,7 +255,7 @@ const SUPABASE_KEY = "sb_publishable_WNgtNruTZeNvYaI4TsCXmA_b6oDYDjh";   // anon
 // ============================================================
 
 const DAY = 24 * 60 * 60 * 1000;
-let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [], currentGroup = "__all__", cramMode = false, manageGroup = "__all__";
+let sb = null, cards = [], algo = "sm2", view = "review", flipped = false, idx = 0, editingId = null, reviewQueue = [], currentGroup = "__all__", cramMode = false, manageGroup = "__all__", manageQuery = "";
 const useCloud = SUPABASE_URL && SUPABASE_KEY;
 
 // ---------- 間隔重複演算法 ----------
@@ -383,6 +405,47 @@ function refreshManageGroupFilter() {
 }
 function onManageGroupChange() {
   manageGroup = document.getElementById("manageGroupFilter").value;
+  render();
+}
+
+// ---------- 管理頁搜尋 ----------
+function inManageGroup(c) {
+  if (manageGroup === "__all__") return true;
+  if (manageGroup === "__none__") return !c.group;
+  return (c.group || "") === manageGroup;
+}
+// 以空白分隔多關鍵字,全部命中才算(AND)
+function queryTerms() { return manageQuery.split(/\s+/).filter(Boolean); }
+function matchCard(c) {
+  const terms = queryTerms();
+  if (!terms.length) return true;
+  const hay = [c.word, c.pos, c.meaning, c.synonyms, c.example, c.group]
+    .filter(Boolean).join(" ").toLowerCase();
+  return terms.every(t => hay.includes(t.toLowerCase()));
+}
+function rxEsc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+// 先跳脫 HTML,再把命中的關鍵字包上 <mark>
+function hl(s) {
+  const e = esc(s);
+  const terms = queryTerms().filter(t => !/[&<>"]/.test(t)); // 含特殊字元就不highlight,避免破壞跳脫
+  if (!terms.length) return e;
+  const rx = new RegExp("(" + terms.map(rxEsc).join("|") + ")", "gi");
+  return e.replace(rx, "<mark>$1</mark>");
+}
+function onManageSearch() {
+  manageQuery = document.getElementById("manageSearch").value.trim();
+  document.getElementById("clearSearch").classList.toggle("hidden", !manageQuery);
+  render();
+}
+function clearManageSearch() {
+  const el = document.getElementById("manageSearch");
+  el.value = ""; manageQuery = "";
+  document.getElementById("clearSearch").classList.add("hidden");
+  render(); el.focus();
+}
+function searchAllGroups() {
+  manageGroup = "__all__";
+  document.getElementById("manageGroupFilter").value = "__all__";
   render();
 }
 
@@ -572,23 +635,38 @@ function render() {
   if (view === "manage") {
     const list = document.getElementById("manageList");
     if (cards.length === 0) { list.innerHTML = `<div class="empty">尚無卡片</div>`; return; }
-    const shown = cards.filter(c =>
-      manageGroup === "__all__" ? true :
-      manageGroup === "__none__" ? !c.group :
-      (c.group || "") === manageGroup);
-    if (shown.length === 0) { list.innerHTML = `<div class="empty">這組目前沒有單字</div>`; return; }
+
+    const shown = cards.filter(c => inManageGroup(c) && matchCard(c));
     const label = manageGroup === "__all__" ? "全部" : manageGroup === "__none__" ? "未分組" : esc(manageGroup);
-    const head = `<div class="listhead">${label} · 共 ${shown.length} 個單字</div>`;
+
+    // 標題列:有搜尋時顯示結果數,否則維持原本樣式
+    const head = manageQuery
+      ? `<div class="listhead">搜尋「${esc(manageQuery)}」· ${shown.length} 筆${manageGroup !== "__all__" ? ` · 限「${label}」` : ""}</div>`
+      : `<div class="listhead">${label} · 共 ${shown.length} 個單字</div>`;
+
+    // 若正在限定組別搜尋,提示其他組別也有結果
+    let hint = "";
+    if (manageQuery && manageGroup !== "__all__") {
+      const others = cards.filter(c => !inManageGroup(c) && matchCard(c)).length;
+      if (others) hint = `<div class="crosshint">其他組別還有 ${others} 筆符合 — <a onclick="searchAllGroups()">改搜尋全部組別</a></div>`;
+    }
+
+    if (shown.length === 0) {
+      const msg = manageQuery ? "找不到符合的單字" : "這組目前沒有單字";
+      list.innerHTML = head + `<div class="empty">${msg}</div>` + hint;
+      return;
+    }
+
     list.innerHTML = head + shown.map(c => `<div class="row" id="row-${c.id}">
       <div>
-        <div class="w">${esc(c.word)} ${c.pos ? `<span class="m">${esc(c.pos)}</span>` : ""}</div>
-        <div class="m">${esc(c.meaning)}${c.synonyms ? ` · ≈ ${esc(c.synonyms)}` : ""}</div>
-        <div class="meta">${c.group ? `組:${esc(c.group)} · ` : ""}下次複習: ${(c.due ?? 0) > Date.now() ? new Date(c.due).toLocaleDateString() : "現在"} · 間隔 ${c.interval || 0}d${algo === "sm2" ? ` · EF ${(c.ef ?? 2.5).toFixed(2)}` : ""}</div>
+        <div class="w">${hl(c.word)} ${c.pos ? `<span class="m">${hl(c.pos)}</span>` : ""}</div>
+        <div class="m">${hl(c.meaning)}${c.synonyms ? ` · ≈ ${hl(c.synonyms)}` : ""}</div>
+        <div class="meta">${c.group ? `組:${hl(c.group)} · ` : ""}下次複習: ${(c.due ?? 0) > Date.now() ? new Date(c.due).toLocaleDateString() : "現在"} · 間隔 ${c.interval || 0}d${algo === "sm2" ? ` · EF ${(c.ef ?? 2.5).toFixed(2)}` : ""}</div>
       </div>
       <div class="rowbtns">
         <button class="edit" onclick="editCard('${c.id}')">✏️</button>
         <button class="del" onclick="removeCard('${c.id}')">🗑</button>
-      </div></div>`).join("");
+      </div></div>`).join("") + hint;
   }
 }
 
@@ -605,6 +683,17 @@ function render() {
     setSpellHint("", "");
     clearTimeout(spellTimer);
     spellTimer = setTimeout(checkSpelling, 700);
+  });
+  // 管理頁搜尋:即時過濾;Esc 清除
+  const ms = document.getElementById("manageSearch");
+  ms.addEventListener("input", onManageSearch);
+  ms.addEventListener("keydown", e => { if (e.key === "Escape") { e.preventDefault(); clearManageSearch(); } });
+  // 桌機:按 / 快速跳到搜尋框(在管理頁時)
+  window.addEventListener("keydown", e => {
+    if (e.key === "/" && view === "manage" && document.activeElement !== ms
+        && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
+      e.preventDefault(); ms.focus();
+    }
   });
   // 返回頂端按鈕:捲動超過 300px 才顯示
   const toTop = document.getElementById("toTop");
